@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestión de reservas | URBAN FADE</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Space+Grotesk:wght@300;400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="noise-overlay"></div>
+    <header class="navbar admin-navbar">
+        <a class="admin-brand" href="index.html">URBAN <span>FADE</span></a>
+        <a class="btn-nav" href="index.html#reservas">VOLVER A RESERVAS</a>
+    </header>
+
+    <main class="admin-page">
+        <section id="loginPanel" class="admin-login">
+            <span class="section-tag">AGENDA DIGITAL</span>
+            <h1>GESTIÓN DE RESERVAS</h1>
+            <p>Inicia sesión para consultar y actualizar los pedidos.</p>
+            <form id="loginForm" class="admin-login-form">
+                <label for="adminEmail">Correo electrónico</label>
+                <input id="adminEmail" type="email" autocomplete="username" required>
+                <label for="adminPassword">Contraseña</label>
+                <input id="adminPassword" type="password" autocomplete="current-password" required>
+                <button id="loginButton" class="btn-submit" type="submit">INICIAR SESIÓN</button>
+            </form>
+        </section>
+
+        <section id="dashboardPanel" class="admin-dashboard is-hidden">
+            <div class="admin-dashboard-heading">
+                <div>
+                    <span class="section-tag">AGENDA DIGITAL</span>
+                    <h1>GESTIÓN DE RESERVAS</h1>
+                    <p id="adminEmailLabel"></p>
+                </div>
+                <button id="logoutButton" class="admin-secondary-button" type="button">CERRAR SESIÓN</button>
+            </div>
+
+            <div class="reservation-stats" aria-live="polite">
+                <article class="reservation-stat">
+                    <span>Total de reservaciones</span>
+                    <strong id="totalReservations">0</strong>
+                </article>
+                <article class="reservation-stat">
+                    <span>Cortes completados</span>
+                    <strong id="completedReservations">0</strong>
+                </article>
+                <article class="reservation-stat">
+                    <span>Pendientes</span>
+                    <strong id="pendingReservations">0</strong>
+                </article>
+            </div>
+
+            <div class="reservations-heading">
+                <h2>Pedidos</h2>
+                <button id="refreshReservations" class="admin-secondary-button" type="button">ACTUALIZAR</button>
+            </div>
+            <div class="admin-table-wrapper">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Fecha y hora</th>
+                            <th>Cliente</th>
+                            <th>WhatsApp</th>
+                            <th>Servicio</th>
+                            <th>Estado</th>
+                            <th>Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reservationRows"></tbody>
+                </table>
+            </div>
+        </section>
+        <p id="adminStatus" class="admin-status" role="status" aria-live="polite"></p>
+    </main>
+
+    <script src="supabase-config.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        const configuracion = window.URBAN_FADE_SUPABASE_CONFIG;
+        const supabaseClient = window.supabase && configuracion &&
+            typeof configuracion.url === 'string' &&
+            configuracion.url.startsWith('https://') &&
+            configuracion.anonKey &&
+            !configuracion.anonKey.includes('PEGA_AQUI')
+            ? window.supabase.createClient(configuracion.url, configuracion.anonKey)
+            : null;
+        const loginPanel = document.getElementById('loginPanel');
+        const dashboardPanel = document.getElementById('dashboardPanel');
+        const adminStatus = document.getElementById('adminStatus');
+        const reservationRows = document.getElementById('reservationRows');
+
+        function mostrarEstado(mensaje, esError) {
+            adminStatus.textContent = mensaje;
+            adminStatus.classList.toggle('is-error', Boolean(esError));
+        }
+
+        function mostrarPanel(session) {
+            loginPanel.classList.toggle('is-hidden', Boolean(session));
+            dashboardPanel.classList.toggle('is-hidden', !session);
+            if (session) {
+                document.getElementById('adminEmailLabel').textContent = session.user.email;
+                window.setTimeout(cargarReservas, 0);
+            }
+        }
+
+        function crearCelda(texto) {
+            const celda = document.createElement('td');
+            celda.textContent = texto;
+            return celda;
+        }
+
+        function renderizarReservas(reservas) {
+            const completadas = reservas.filter((reserva) => reserva.status === 'completed').length;
+            document.getElementById('totalReservations').textContent = reservas.length;
+            document.getElementById('completedReservations').textContent = completadas;
+            document.getElementById('pendingReservations').textContent = reservas.length - completadas;
+            reservationRows.replaceChildren();
+
+            if (reservas.length === 0) {
+                const fila = document.createElement('tr');
+                const celda = crearCelda('Todavía no hay reservaciones.');
+                celda.colSpan = 6;
+                celda.className = 'admin-empty';
+                fila.append(celda);
+                reservationRows.append(fila);
+                return;
+            }
+
+            reservas.forEach((reserva) => {
+                const fila = document.createElement('tr');
+                const fecha = new Date(`${reserva.appointment_date}T00:00:00`);
+                fila.append(crearCelda(`${fecha.toLocaleDateString('es-EC')} · ${reserva.appointment_time.slice(0, 5)}`));
+                fila.append(crearCelda(reserva.customer_name));
+
+                const celdaTelefono = document.createElement('td');
+                const enlaceTelefono = document.createElement('a');
+                enlaceTelefono.href = `https://wa.me/${reserva.phone.replace(/\D/g, '')}`;
+                enlaceTelefono.target = '_blank';
+                enlaceTelefono.rel = 'noopener noreferrer';
+                enlaceTelefono.textContent = reserva.phone;
+                celdaTelefono.append(enlaceTelefono);
+                fila.append(celdaTelefono);
+                fila.append(crearCelda(reserva.service));
+
+                const celdaEstado = document.createElement('td');
+                const estado = document.createElement('span');
+                estado.className = `reservation-status ${reserva.status}`;
+                estado.textContent = reserva.status === 'completed' ? 'Completada' : 'Pendiente';
+                celdaEstado.append(estado);
+                fila.append(celdaEstado);
+
+                const celdaAccion = document.createElement('td');
+                const boton = document.createElement('button');
+                boton.type = 'button';
+                boton.className = 'admin-action-button';
+                boton.dataset.id = reserva.id;
+                boton.dataset.nextStatus = reserva.status === 'completed' ? 'pending' : 'completed';
+                boton.textContent = reserva.status === 'completed' ? 'Marcar pendiente' : 'Marcar completada';
+                celdaAccion.append(boton);
+                fila.append(celdaAccion);
+                reservationRows.append(fila);
+            });
+        }
+
+        async function cargarReservas() {
+            if (!supabaseClient) {
+                mostrarEstado('Configura la conexión a Supabase antes de usar el panel.', true);
+                return;
+            }
+
+            mostrarEstado('Cargando reservaciones…', false);
+            let resultado;
+            try {
+                resultado = await supabaseClient
+                    .from('reservations')
+                    .select('id, customer_name, phone, service, appointment_date, appointment_time, status, created_at')
+                    .order('created_at', { ascending: false });
+            } catch (error) {
+                console.error('Error al cargar las reservaciones:', error);
+                mostrarEstado('No se pudieron cargar las reservaciones por un problema de conexión.', true);
+                return;
+            }
+            const { data, error } = resultado;
+            if (error) {
+                console.error('Error al cargar las reservaciones:', error);
+                mostrarEstado(`No se pudieron cargar las reservaciones: ${error.message}`, true);
+                return;
+            }
+
+            renderizarReservas(data);
+            mostrarEstado(`Se cargaron ${data.length} reservaciones.`, false);
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (!supabaseClient) {
+                mostrarEstado('Configura la conexión a Supabase antes de iniciar sesión.', true);
+                return;
+            }
+
+            const boton = document.getElementById('loginButton');
+            boton.disabled = true;
+            mostrarEstado('Iniciando sesión…', false);
+            let respuestaInicio;
+            try {
+                respuestaInicio = await supabaseClient.auth.signInWithPassword({
+                    email: document.getElementById('adminEmail').value.trim(),
+                    password: document.getElementById('adminPassword').value
+                });
+            } catch (error) {
+                console.error('Error al iniciar sesión:', error);
+                boton.disabled = false;
+                mostrarEstado('No se pudo conectar para iniciar sesión. Inténtalo de nuevo.', true);
+                return;
+            }
+            boton.disabled = false;
+            const { error } = respuestaInicio;
+            if (error) {
+                mostrarEstado(`No se pudo iniciar sesión: ${error.message}`, true);
+                return;
+            }
+            let respuestaSesion;
+            try {
+                respuestaSesion = await supabaseClient.auth.getSession();
+            } catch (sessionError) {
+                console.error('Error al verificar la sesión:', sessionError);
+                mostrarEstado('No se pudo verificar la sesión. Inténtalo de nuevo.', true);
+                return;
+            }
+            const { data, error: sessionError } = respuestaSesion;
+            if (sessionError) {
+                mostrarEstado(`No se pudo verificar la sesión: ${sessionError.message}`, true);
+                return;
+            }
+            mostrarPanel(data.session);
+        });
+
+        document.getElementById('logoutButton').addEventListener('click', async () => {
+            let respuesta;
+            try {
+                respuesta = await supabaseClient.auth.signOut();
+            } catch (error) {
+                console.error('Error al cerrar sesión:', error);
+                mostrarEstado('No se pudo conectar para cerrar sesión. Inténtalo de nuevo.', true);
+                return;
+            }
+            const { error } = respuesta;
+            if (error) {
+                mostrarEstado(`No se pudo cerrar sesión: ${error.message}`, true);
+                return;
+            }
+            mostrarPanel(null);
+            mostrarEstado('Sesión cerrada.', false);
+        });
+
+        document.getElementById('refreshReservations').addEventListener('click', cargarReservas);
+        reservationRows.addEventListener('click', async (event) => {
+            const boton = event.target.closest('button[data-id]');
+            if (!boton || !supabaseClient) return;
+
+            boton.disabled = true;
+            const status = boton.dataset.nextStatus;
+            let respuesta;
+            try {
+                respuesta = await supabaseClient
+                    .from('reservations')
+                    .update({
+                        status,
+                        completed_at: status === 'completed' ? new Date().toISOString() : null
+                    })
+                    .eq('id', boton.dataset.id);
+            } catch (error) {
+                console.error('Error al actualizar la reservación:', error);
+                mostrarEstado('No se pudo conectar para actualizar la reservación.', true);
+                boton.disabled = false;
+                return;
+            }
+            const { error } = respuesta;
+            if (error) {
+                console.error('Error al actualizar la reservación:', error);
+                mostrarEstado(`No se pudo actualizar la reservación: ${error.message}`, true);
+                boton.disabled = false;
+                return;
+            }
+            await cargarReservas();
+        });
+
+        if (!supabaseClient) {
+            mostrarEstado('Configura la conexión a Supabase para habilitar el panel.', true);
+        } else {
+            supabaseClient.auth.onAuthStateChange((_event, session) => mostrarPanel(session));
+            supabaseClient.auth.getSession().then(({ data, error }) => {
+                if (error) {
+                    mostrarEstado(`No se pudo verificar la sesión: ${error.message}`, true);
+                    return;
+                }
+                mostrarPanel(data.session);
+            }).catch((error) => {
+                console.error('Error al verificar la sesión:', error);
+                mostrarEstado('No se pudo verificar la sesión. Inténtalo de nuevo.', true);
+            });
+        }
+    </script>
+</body>
+</html>
